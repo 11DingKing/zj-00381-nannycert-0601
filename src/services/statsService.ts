@@ -131,11 +131,27 @@ export function getLevelDistributionByServiceType(
   const rows = db
     .prepare(
       `
-    SELECT level, COUNT(DISTINCT worker_id) as count 
-    FROM certifications 
-    WHERE service_type = ? 
-      AND status = 'approved' 
-      AND expires_at > datetime('now')
+    WITH ranked_certs AS (
+      SELECT 
+        worker_id, 
+        level,
+        ROW_NUMBER() OVER (
+          PARTITION BY worker_id 
+          ORDER BY 
+            CASE level 
+              WHEN 'senior' THEN 1 
+              WHEN 'intermediate' THEN 2 
+              WHEN 'junior' THEN 3 
+            END
+        ) as rn
+      FROM certifications 
+      WHERE service_type = ? 
+        AND status = 'approved' 
+        AND expires_at > datetime('now')
+    )
+    SELECT level, COUNT(*) as count 
+    FROM ranked_certs 
+    WHERE rn = 1
     GROUP BY level
     ORDER BY 
       CASE level 

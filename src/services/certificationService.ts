@@ -21,6 +21,22 @@ export interface ReviewCertificationDto {
   validYears?: number;
 }
 
+export interface CertificationProfile {
+  workerId: number;
+  highestLevel: SkillLevel | null;
+  validCertifications: Certification[];
+  expiredCertifications: Certification[];
+  pendingCertifications: Certification[];
+  rejectedCertifications: Certification[];
+  reviewRecords: Certification[];
+}
+
+const levelOrder: Record<SkillLevel, number> = {
+  [SkillLevel.JUNIOR]: 1,
+  [SkillLevel.INTERMEDIATE]: 2,
+  [SkillLevel.SENIOR]: 3,
+};
+
 function rowToCertification(row: any): Certification {
   return {
     id: row.id,
@@ -123,13 +139,95 @@ export function getValidCertification(
       AND service_type = ? 
       AND status = 'approved'
       AND expires_at > ?
-    ORDER BY level DESC
+    ORDER BY 
+      CASE level 
+        WHEN 'senior' THEN 1 
+        WHEN 'intermediate' THEN 2 
+        WHEN 'junior' THEN 3 
+      END
     LIMIT 1
   `,
     )
     .get(workerId, serviceType, now);
 
   return row ? rowToCertification(row) : null;
+}
+
+export function getHighestCertification(
+  workerId: number,
+): Certification | null {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  const row = db
+    .prepare(
+      `
+    SELECT * FROM certifications 
+    WHERE worker_id = ? 
+      AND status = 'approved'
+      AND expires_at > ?
+    ORDER BY 
+      CASE level 
+        WHEN 'senior' THEN 1 
+        WHEN 'intermediate' THEN 2 
+        WHEN 'junior' THEN 3 
+      END
+    LIMIT 1
+  `,
+    )
+    .get(workerId, now);
+
+  return row ? rowToCertification(row) : null;
+}
+
+export function getWorkerCertificationProfile(
+  workerId: number,
+): CertificationProfile {
+  const now = new Date().toISOString();
+  const allCerts = getWorkerCertifications(workerId);
+
+  const validCertifications = allCerts.filter(
+    (c) =>
+      c.status === CertificationStatus.APPROVED &&
+      c.expiresAt &&
+      c.expiresAt > now,
+  );
+
+  const expiredCertifications = allCerts.filter(
+    (c) =>
+      c.status === CertificationStatus.EXPIRED ||
+      (c.status === CertificationStatus.APPROVED &&
+        c.expiresAt &&
+        c.expiresAt <= now),
+  );
+
+  const pendingCertifications = allCerts.filter(
+    (c) => c.status === CertificationStatus.PENDING,
+  );
+
+  const rejectedCertifications = allCerts.filter(
+    (c) => c.status === CertificationStatus.REJECTED,
+  );
+
+  const reviewRecords = allCerts.filter((c) => c.reviewCount > 0);
+
+  let highestLevel: SkillLevel | null = null;
+  if (validCertifications.length > 0) {
+    validCertifications.sort(
+      (a, b) => levelOrder[b.level] - levelOrder[a.level],
+    );
+    highestLevel = validCertifications[0].level;
+  }
+
+  return {
+    workerId,
+    highestLevel,
+    validCertifications,
+    expiredCertifications,
+    pendingCertifications,
+    rejectedCertifications,
+    reviewRecords,
+  };
 }
 
 export function reviewCertification(

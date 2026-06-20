@@ -419,3 +419,370 @@ describe("统计功能", () => {
     expect(statusStats[CertificationStatus.PENDING]).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("多证书等级优先级与统计修正", () => {
+  test("同一服务类型多证书时取最高等级", () => {
+    const worker = workerService.createWorker({
+      idCard: "110101199303031000",
+      name: "测试多证",
+      phone: "13900002001",
+      serviceTypes: [ServiceType.DAILY_CLEANING],
+      healthStatus: "健康",
+      yearsOfExperience: 5,
+    });
+    workerService.approveWorker(worker.id);
+
+    const certJunior = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.JUNIOR,
+      trainingCertificate: "培训结业证.pdf",
+      practicalAssessmentRecord: "实操考核记录.docx",
+    });
+    certificationService.reviewCertification(certJunior.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    const certSenior = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.SENIOR,
+      trainingCertificate: "高级培训结业证.pdf",
+      practicalAssessmentRecord: "高级实操考核记录.docx",
+    });
+    certificationService.reviewCertification(certSenior.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    const validCert = certificationService.getValidCertification(
+      worker.id,
+      ServiceType.DAILY_CLEANING,
+    );
+    expect(validCert).toBeDefined();
+    expect(validCert!.level).toBe(SkillLevel.SENIOR);
+  });
+
+  test("多服务类型证书时，各服务类型独立取最高等级", () => {
+    const worker = workerService.createWorker({
+      idCard: "110101199304041001",
+      name: "测试多服务",
+      phone: "13900002002",
+      serviceTypes: [
+        ServiceType.DAILY_CLEANING,
+        ServiceType.ELDERLY_CARE,
+        ServiceType.MATERNAL_INFANT_CARE,
+      ],
+      healthStatus: "健康",
+      yearsOfExperience: 10,
+    });
+    workerService.approveWorker(worker.id);
+
+    const cert1 = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.JUNIOR,
+      trainingCertificate: "保洁初级.pdf",
+      practicalAssessmentRecord: "保洁初级实操.docx",
+    });
+    certificationService.reviewCertification(cert1.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    const cert2 = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "养老中级.pdf",
+      practicalAssessmentRecord: "养老中级实操.docx",
+    });
+    certificationService.reviewCertification(cert2.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    const cert3 = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.MATERNAL_INFANT_CARE,
+      level: SkillLevel.SENIOR,
+      trainingCertificate: "母婴高级.pdf",
+      practicalAssessmentRecord: "母婴高级实操.docx",
+    });
+    certificationService.reviewCertification(cert3.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    expect(
+      certificationService.getValidCertification(
+        worker.id,
+        ServiceType.DAILY_CLEANING,
+      )!.level,
+    ).toBe(SkillLevel.JUNIOR);
+    expect(
+      certificationService.getValidCertification(
+        worker.id,
+        ServiceType.ELDERLY_CARE,
+      )!.level,
+    ).toBe(SkillLevel.INTERMEDIATE);
+    expect(
+      certificationService.getValidCertification(
+        worker.id,
+        ServiceType.MATERNAL_INFANT_CARE,
+      )!.level,
+    ).toBe(SkillLevel.SENIOR);
+
+    const highest = certificationService.getHighestCertification(worker.id);
+    expect(highest!.level).toBe(SkillLevel.SENIOR);
+    expect(highest!.serviceType).toBe(ServiceType.MATERNAL_INFANT_CARE);
+  });
+
+  test("过期证书不参与接单校验和最高等级计算", () => {
+    const worker = workerService.createWorker({
+      idCard: "110101199305051002",
+      name: "测试过期证",
+      phone: "13900002003",
+      serviceTypes: [ServiceType.ELDERLY_CARE, ServiceType.DAILY_CLEANING],
+      healthStatus: "健康",
+      yearsOfExperience: 8,
+    });
+    workerService.approveWorker(worker.id);
+
+    const juniorCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.JUNIOR,
+      trainingCertificate: "养老初级.pdf",
+      practicalAssessmentRecord: "养老初级实操.docx",
+    });
+    certificationService.reviewCertification(juniorCert.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    const seniorCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.SENIOR,
+      trainingCertificate: "养老高级.pdf",
+      practicalAssessmentRecord: "养老高级实操.docx",
+    });
+    const reviewedSenior = certificationService.reviewCertification(
+      seniorCert.id,
+      {
+        passed: true,
+        validYears: 3,
+      },
+    );
+
+    const inMemoryDb = require("../src/database/database").getDb();
+    const pastDate = new Date();
+    pastDate.setFullYear(pastDate.getFullYear() - 2);
+    const expiredDate = new Date();
+    expiredDate.setFullYear(expiredDate.getFullYear() - 1);
+    inMemoryDb
+      .prepare(
+        `UPDATE certifications SET issued_at = ?, expires_at = ?, status = 'expired' WHERE id = ?`,
+      )
+      .run(pastDate.toISOString(), expiredDate.toISOString(), seniorCert.id);
+
+    const validCert = certificationService.getValidCertification(
+      worker.id,
+      ServiceType.ELDERLY_CARE,
+    );
+    expect(validCert).toBeDefined();
+    expect(validCert!.level).toBe(SkillLevel.JUNIOR);
+    expect(validCert!.id).toBe(juniorCert.id);
+
+    const canTakeOrderResult = serviceTypeService.canTakeOrder(
+      worker.id,
+      ServiceType.ELDERLY_CARE,
+    );
+    expect(canTakeOrderResult.allowed).toBe(false);
+    expect(canTakeOrderResult.reason).toContain("需要intermediate等级认证");
+  });
+
+  test("持证分布统计时同一人不重复计数", () => {
+    const testWorkerIds: number[] = [];
+
+    for (let i = 0; i < 2; i++) {
+      const worker = workerService.createWorker({
+        idCard: `1101011993060${i}100${i}`,
+        name: `统计测试${i}`,
+        phone: `1390000201${i}`,
+        serviceTypes: [ServiceType.MATERNAL_INFANT_CARE],
+        healthStatus: "健康",
+        yearsOfExperience: 3 + i,
+      });
+      workerService.approveWorker(worker.id);
+      testWorkerIds.push(worker.id);
+
+      const juniorCert = certificationService.applyCertification({
+        workerId: worker.id,
+        serviceType: ServiceType.MATERNAL_INFANT_CARE,
+        level: SkillLevel.JUNIOR,
+        trainingCertificate: "初级.pdf",
+        practicalAssessmentRecord: "初级实操.docx",
+      });
+      certificationService.reviewCertification(juniorCert.id, {
+        passed: true,
+        validYears: 3,
+      });
+
+      const seniorCert = certificationService.applyCertification({
+        workerId: worker.id,
+        serviceType: ServiceType.MATERNAL_INFANT_CARE,
+        level: SkillLevel.SENIOR,
+        trainingCertificate: "高级.pdf",
+        practicalAssessmentRecord: "高级实操.docx",
+      });
+      certificationService.reviewCertification(seniorCert.id, {
+        passed: true,
+        validYears: 3,
+      });
+    }
+
+    const distribution = statsService.getLevelDistributionByServiceType(
+      ServiceType.MATERNAL_INFANT_CARE,
+    );
+
+    const juniorCount = distribution.find(
+      (d) => d.level === SkillLevel.JUNIOR,
+    )!.count;
+    const seniorCount = distribution.find(
+      (d) => d.level === SkillLevel.SENIOR,
+    )!.count;
+    const intermediateCount = distribution.find(
+      (d) => d.level === SkillLevel.INTERMEDIATE,
+    )!.count;
+    const totalCount = juniorCount + intermediateCount + seniorCount;
+
+    for (const workerId of testWorkerIds) {
+      const highest = certificationService.getHighestCertification(workerId);
+      expect(highest!.level).toBe(SkillLevel.SENIOR);
+    }
+
+    expect(seniorCount).toBeGreaterThanOrEqual(2);
+    expect(intermediateCount).toBe(0);
+    expect(totalCount).toBeGreaterThanOrEqual(2);
+
+    for (const workerId of testWorkerIds) {
+      const allCerts = certificationService.getWorkerCertifications(workerId);
+      const validCerts = allCerts.filter(
+        (c) => c.status === CertificationStatus.APPROVED,
+      );
+      expect(validCerts.length).toBe(2);
+    }
+  });
+
+  test("证书档案包含所有状态证书和复审记录", () => {
+    const worker = workerService.createWorker({
+      idCard: "110101199307071007",
+      name: "测试档案",
+      phone: "13900002007",
+      serviceTypes: [ServiceType.DAILY_CLEANING, ServiceType.ELDERLY_CARE],
+      healthStatus: "健康",
+      yearsOfExperience: 6,
+    });
+    workerService.approveWorker(worker.id);
+
+    const validCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.SENIOR,
+      trainingCertificate: "保洁高级.pdf",
+      practicalAssessmentRecord: "保洁高级实操.docx",
+    });
+    const reviewed = certificationService.reviewCertification(validCert.id, {
+      passed: true,
+      validYears: 1,
+    });
+    certificationService.renewCertification(validCert.id, 3);
+
+    const rejectedCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.JUNIOR,
+      trainingCertificate: "养老初级.pdf",
+      practicalAssessmentRecord: "养老初级实操.docx",
+    });
+    certificationService.reviewCertification(rejectedCert.id, {
+      passed: false,
+    });
+
+    const pendingCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "养老中级.pdf",
+      practicalAssessmentRecord: "养老中级实操.docx",
+    });
+
+    const profile = certificationService.getWorkerCertificationProfile(
+      worker.id,
+    );
+
+    expect(profile.workerId).toBe(worker.id);
+    expect(profile.highestLevel).toBe(SkillLevel.SENIOR);
+    expect(profile.validCertifications.length).toBe(1);
+    expect(profile.validCertifications[0].level).toBe(SkillLevel.SENIOR);
+    expect(profile.rejectedCertifications.length).toBe(1);
+    expect(profile.pendingCertifications.length).toBe(1);
+    expect(profile.reviewRecords.length).toBe(1);
+    expect(profile.reviewRecords[0].reviewCount).toBe(1);
+    expect(profile.validCertifications[0].trainingCertificate).toBeDefined();
+    expect(
+      profile.validCertifications[0].practicalAssessmentRecord,
+    ).toBeDefined();
+  });
+
+  test("同服务类型有高级证和初级证时，按高级证校验接单资格", () => {
+    const worker = workerService.createWorker({
+      idCard: "110101199308081008",
+      name: "测试接单",
+      phone: "13900002008",
+      serviceTypes: [ServiceType.MATERNAL_INFANT_CARE],
+      healthStatus: "健康",
+      yearsOfExperience: 10,
+    });
+    workerService.approveWorker(worker.id);
+
+    const juniorCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.MATERNAL_INFANT_CARE,
+      level: SkillLevel.JUNIOR,
+      trainingCertificate: "母婴初级.pdf",
+      practicalAssessmentRecord: "母婴初级实操.docx",
+    });
+    certificationService.reviewCertification(juniorCert.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    let canTake = serviceTypeService.canTakeOrder(
+      worker.id,
+      ServiceType.MATERNAL_INFANT_CARE,
+    );
+    expect(canTake.allowed).toBe(false);
+
+    const seniorCert = certificationService.applyCertification({
+      workerId: worker.id,
+      serviceType: ServiceType.MATERNAL_INFANT_CARE,
+      level: SkillLevel.SENIOR,
+      trainingCertificate: "母婴高级.pdf",
+      practicalAssessmentRecord: "母婴高级实操.docx",
+    });
+    certificationService.reviewCertification(seniorCert.id, {
+      passed: true,
+      validYears: 3,
+    });
+
+    canTake = serviceTypeService.canTakeOrder(
+      worker.id,
+      ServiceType.MATERNAL_INFANT_CARE,
+    );
+    expect(canTake.allowed).toBe(true);
+  });
+});

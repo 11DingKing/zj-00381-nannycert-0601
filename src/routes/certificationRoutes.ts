@@ -87,4 +87,26 @@ router.get("/worker/:workerId", (req: Request, res: Response) => {
   res.json(certs);
 });
 
+router.get("/valid/:workerId/:serviceType", (req: Request, res: Response) => {
+  const cert = certificationService.getValidCertification(
+    getWorkerIdParam(req),
+    req.params.serviceType as ServiceType,
+  );
+  res.json(cert);
+});
+
+router.get("/highest/:workerId", (req: Request, res: Response) => {
+  const cert = certificationService.getHighestCertification(
+    getWorkerIdParam(req),
+  );
+  res.json(cert);
+});
+
+router.get("/profile/:workerId", (req: Request, res: Response) => {
+  const profile = certificationService.getWorkerCertificationProfile(
+    getWorkerIdParam(req),
+  );
+  res.json(profile);
+});
+
 export default router;

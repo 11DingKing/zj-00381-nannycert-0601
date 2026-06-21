@@ -28,6 +28,7 @@ export interface CertificationProfile {
   expiredCertifications: Certification[];
   pendingCertifications: Certification[];
   rejectedCertifications: Certification[];
+  revokedCertifications: Certification[];
   reviewRecords: Certification[];
 }
 
@@ -185,6 +186,7 @@ export function getWorkerCertificationProfile(
 ): CertificationProfile {
   const now = new Date().toISOString();
   const allCerts = getWorkerCertifications(workerId);
+  const worker = getWorker(workerId);
 
   const validCertifications = allCerts.filter(
     (c) =>
@@ -209,10 +211,18 @@ export function getWorkerCertificationProfile(
     (c) => c.status === CertificationStatus.REJECTED,
   );
 
+  const revokedCertifications = allCerts.filter(
+    (c) => c.status === CertificationStatus.REVOKED,
+  );
+
   const reviewRecords = allCerts.filter((c) => c.reviewCount > 0);
 
   let highestLevel: SkillLevel | null = null;
-  if (validCertifications.length > 0) {
+  if (
+    worker &&
+    worker.status !== WorkerStatus.FROZEN &&
+    validCertifications.length > 0
+  ) {
     validCertifications.sort(
       (a, b) => levelOrder[b.level] - levelOrder[a.level],
     );
@@ -226,6 +236,7 @@ export function getWorkerCertificationProfile(
     expiredCertifications,
     pendingCertifications,
     rejectedCertifications,
+    revokedCertifications,
     reviewRecords,
   };
 }
@@ -407,19 +418,21 @@ export function getExpiringCertifications(
   targetDate.setDate(now.getDate() + days);
 
   let query = `
-    SELECT * FROM certifications 
-    WHERE status = 'approved' 
-      AND expires_at > ? 
-      AND expires_at <= ?
+    SELECT c.* FROM certifications c
+    JOIN workers w ON c.worker_id = w.id
+    WHERE c.status = 'approved' 
+      AND c.expires_at > ? 
+      AND c.expires_at <= ?
+      AND w.status != 'frozen'
   `;
   const params: any[] = [now.toISOString(), targetDate.toISOString()];
 
   if (serviceType) {
-    query += " AND service_type = ?";
+    query += " AND c.service_type = ?";
     params.push(serviceType);
   }
 
-  query += " ORDER BY expires_at ASC";
+  query += " ORDER BY c.expires_at ASC";
 
   const rows = db.prepare(query).all(...params);
   return rows.map(rowToCertification);
@@ -445,6 +458,7 @@ export function getExpiringCertificationsWithWorkers(
     WHERE c.status = 'approved' 
       AND c.expires_at > ? 
       AND c.expires_at <= ?
+      AND w.status != 'frozen'
   `;
   const params: any[] = [now.toISOString(), targetDate.toISOString()];
 

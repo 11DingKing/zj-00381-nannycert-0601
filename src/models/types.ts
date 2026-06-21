@@ -23,6 +23,7 @@ export enum CertificationStatus {
   REJECTED = "rejected",
   EXPIRED = "expired",
   REMEDIAL_TRAINING = "remedial_training",
+  REVOKED = "revoked",
 }
 
 export enum TrainingType {

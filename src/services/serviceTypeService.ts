@@ -1,5 +1,10 @@
 import { getDb } from "../database/database";
-import { ServiceType, SkillLevel, ServiceTypeConfig } from "../models/types";
+import {
+  ServiceType,
+  SkillLevel,
+  ServiceTypeConfig,
+  WorkerStatus,
+} from "../models/types";
 import { getValidCertification } from "./certificationService";
 
 const levelOrder: Record<SkillLevel, number> = {
@@ -109,6 +114,23 @@ export function canTakeOrder(
   const config = getServiceTypeConfig(serviceType);
   if (!config) {
     return { allowed: false, reason: "服务类型不存在" };
+  }
+
+  const db = getDb();
+  const workerRow = db
+    .prepare("SELECT status FROM workers WHERE id = ?")
+    .get(workerId) as any;
+
+  if (!workerRow) {
+    return { allowed: false, reason: "家政人员不存在" };
+  }
+
+  if (workerRow.status === WorkerStatus.FROZEN) {
+    return { allowed: false, reason: "人员已被冻结，禁止接单" };
+  }
+
+  if (workerRow.status === WorkerStatus.PENDING_REVIEW) {
+    return { allowed: false, reason: "人员待审核中，暂不可接单" };
   }
 
   const cert = getValidCertification(workerId, serviceType);

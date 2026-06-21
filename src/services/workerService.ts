@@ -222,6 +222,37 @@ export function getServiceTypeEligibility(
 ): ServiceTypeEligibility {
   const config = getServiceTypeConfig(serviceType);
   const serviceName = config?.name || serviceType;
+  const worker = getWorker(workerId);
+
+  if (!worker) {
+    return {
+      serviceType,
+      serviceName,
+      eligible: false,
+      reason: "人员不存在",
+    };
+  }
+
+  if (worker.status === WorkerStatus.FROZEN) {
+    const allCerts = getWorkerCertifications(workerId);
+    const serviceCerts = allCerts.filter((c) => c.serviceType === serviceType);
+    return {
+      serviceType,
+      serviceName,
+      eligible: false,
+      reason: "人员已被冻结，禁止接单",
+      certification: serviceCerts[0],
+    };
+  }
+
+  if (worker.status === WorkerStatus.PENDING_REVIEW) {
+    return {
+      serviceType,
+      serviceName,
+      eligible: false,
+      reason: "人员待审核中，暂不可接单",
+    };
+  }
 
   const cert = getValidCertification(workerId, serviceType);
   const activeTraining = getActiveTraining(workerId, serviceType);
@@ -289,6 +320,15 @@ export function getServiceTypeEligibility(
         certification: latestCert,
       };
     }
+    if (latestCert.status === CertificationStatus.REVOKED) {
+      return {
+        serviceType,
+        serviceName,
+        eligible: false,
+        reason: "证书已被撤销，禁止接单",
+        certification: latestCert,
+      };
+    }
   }
 
   return {
@@ -333,26 +373,33 @@ export function getWorkersByEligibility(
 
   if (eligible) {
     const query = `
-      SELECT w.*, c.id as cert_id
+      SELECT w.*
       FROM workers w
-      JOIN certifications c ON w.id = c.worker_id
-      WHERE c.service_type = ?
-        AND c.status = 'approved'
-        AND c.expires_at > ?
-        AND w.status != 'frozen'
-      GROUP BY w.id
-      ORDER BY c.expires_at ASC
+      WHERE w.status != 'frozen'
+        AND w.status != 'pending_review'
+        AND EXISTS (
+          SELECT 1 FROM certifications c
+          WHERE c.worker_id = w.id
+            AND c.service_type = ?
+            AND c.status = 'approved'
+            AND c.expires_at > ?
+        )
+      ORDER BY w.updated_at DESC
       LIMIT ? OFFSET ?
     `;
 
     const countQuery = `
-      SELECT COUNT(DISTINCT w.id) as count
+      SELECT COUNT(*) as count
       FROM workers w
-      JOIN certifications c ON w.id = c.worker_id
-      WHERE c.service_type = ?
-        AND c.status = 'approved'
-        AND c.expires_at > ?
-        AND w.status != 'frozen'
+      WHERE w.status != 'frozen'
+        AND w.status != 'pending_review'
+        AND EXISTS (
+          SELECT 1 FROM certifications c
+          WHERE c.worker_id = w.id
+            AND c.service_type = ?
+            AND c.status = 'approved'
+            AND c.expires_at > ?
+        )
     `;
 
     const rows = db
@@ -369,27 +416,37 @@ export function getWorkersByEligibility(
     return { workers, total: totalRow.count };
   } else {
     const query = `
-      SELECT DISTINCT w.*
+      SELECT w.*
       FROM workers w
-      LEFT JOIN certifications c ON w.id = c.worker_id AND c.service_type = ?
-      WHERE (c.id IS NULL 
-         OR c.status != 'approved' 
-         OR c.expires_at <= ?
-         OR w.status = 'frozen')
-        AND w.status != 'pending_review'
+      WHERE w.status != 'pending_review'
+        AND (
+          w.status = 'frozen'
+          OR NOT EXISTS (
+            SELECT 1 FROM certifications c
+            WHERE c.worker_id = w.id
+              AND c.service_type = ?
+              AND c.status = 'approved'
+              AND c.expires_at > ?
+          )
+        )
       ORDER BY w.updated_at DESC
       LIMIT ? OFFSET ?
     `;
 
     const countQuery = `
-      SELECT COUNT(DISTINCT w.id) as count
+      SELECT COUNT(*) as count
       FROM workers w
-      LEFT JOIN certifications c ON w.id = c.worker_id AND c.service_type = ?
-      WHERE (c.id IS NULL 
-         OR c.status != 'approved' 
-         OR c.expires_at <= ?
-         OR w.status = 'frozen')
-        AND w.status != 'pending_review'
+      WHERE w.status != 'pending_review'
+        AND (
+          w.status = 'frozen'
+          OR NOT EXISTS (
+            SELECT 1 FROM certifications c
+            WHERE c.worker_id = w.id
+              AND c.service_type = ?
+              AND c.status = 'approved'
+              AND c.expires_at > ?
+          )
+        )
     `;
 
     const rows = db

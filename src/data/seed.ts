@@ -11,6 +11,7 @@ import {
   renewCertification,
   getWorkerCertifications,
   updateCertificationStatus,
+  reviewRenewalCertification,
 } from "../services/certificationService";
 import { createTraining, startTraining } from "../services/trainingService";
 import { initServiceTypeConfigs } from "../services/serviceTypeService";
@@ -501,6 +502,98 @@ export function seedSampleData() {
     );
   } catch (e) {
     console.log(`跳过已存在的恢复示例人员`);
+  }
+
+  try {
+    const revokedWorker = createWorker({
+      idCard: "310101197202020008",
+      name: "韩撤销",
+      phone: "13800000108",
+      serviceTypes: [
+        ServiceType.MATERNAL_INFANT_CARE,
+        ServiceType.DAILY_CLEANING,
+      ],
+      healthStatus: "健康",
+      yearsOfExperience: 10,
+    });
+    approveWorker(revokedWorker.id);
+
+    const validCert = applyCertification({
+      workerId: revokedWorker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "韩撤销-日常保洁-中级培训结业证书.pdf",
+      practicalAssessmentRecord: "韩撤销-日常保洁-中级实操考核记录.docx",
+    });
+    reviewCertification(validCert.id, { passed: true, validYears: 3 });
+
+    const revokedCert = applyCertification({
+      workerId: revokedWorker.id,
+      serviceType: ServiceType.MATERNAL_INFANT_CARE,
+      level: SkillLevel.SENIOR,
+      trainingCertificate: "韩撤销-母婴照料-高级培训结业证书.pdf",
+      practicalAssessmentRecord: "韩撤销-母婴照料-高级实操考核记录.docx",
+    });
+    reviewCertification(revokedCert.id, { passed: true, validYears: 3 });
+
+    updateCertificationStatus(revokedCert.id, CertificationStatus.REVOKED);
+
+    console.log(
+      `创建撤销证书示例: 韩撤销 (ID: ${revokedWorker.id}) - 保洁中级有效、母婴高级已撤销`,
+    );
+  } catch (e) {
+    console.log(`跳过已存在的撤销证书示例人员`);
+  }
+
+  try {
+    const failedReviewWorker = createWorker({
+      idCard: "310101197606060009",
+      name: "褚复审失败",
+      phone: "13800000109",
+      serviceTypes: [ServiceType.ELDERLY_CARE],
+      healthStatus: "健康",
+      yearsOfExperience: 12,
+    });
+    approveWorker(failedReviewWorker.id);
+
+    const failedCert = applyCertification({
+      workerId: failedReviewWorker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "褚复审失败-养老陪护-中级培训结业证书.pdf",
+      practicalAssessmentRecord: "褚复审失败-养老陪护-中级实操考核记录.docx",
+    });
+    reviewCertification(failedCert.id, { passed: true, validYears: 3 });
+
+    const pastDate = new Date();
+    pastDate.setFullYear(pastDate.getFullYear() - 4);
+    const expiredDate = new Date();
+    expiredDate.setFullYear(expiredDate.getFullYear() - 1);
+
+    db.prepare(
+      `
+      UPDATE certifications 
+      SET issued_at = ?, expires_at = ?, status = 'expired', updated_at = datetime('now')
+      WHERE id = ?
+      `,
+    ).run(pastDate.toISOString(), expiredDate.toISOString(), failedCert.id);
+
+    const failedRenewalCert = applyCertification({
+      workerId: failedReviewWorker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "褚复审失败-养老陪护-中级复审培训结业证书.pdf",
+      practicalAssessmentRecord:
+        "褚复审失败-养老陪护-中级复审实操考核记录.docx",
+    });
+
+    reviewRenewalCertification(failedRenewalCert.id, { passed: false });
+
+    console.log(
+      `创建复审失败示例: 褚复审失败 (ID: ${failedReviewWorker.id}) - 养老中级原证过期、复审未通过`,
+    );
+  } catch (e) {
+    console.log(`跳过已存在的复审失败示例人员`);
   }
 
   console.log("示例数据初始化完成");

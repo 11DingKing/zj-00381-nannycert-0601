@@ -30,6 +30,7 @@ export interface OperationsServiceTypeStats {
   remedialTrainingCount: number;
   pendingReviewCount: number;
   rejectedCount: number;
+  revokedCount: number;
 }
 
 export interface OperationsStats {
@@ -39,6 +40,7 @@ export interface OperationsStats {
   expiredCount: number;
   remedialTrainingCount: number;
   pendingReviewCount: number;
+  revokedCount: number;
   byServiceType: OperationsServiceTypeStats[];
 }
 
@@ -100,11 +102,13 @@ export function getServiceTypeStats(): ServiceTypeStats[] {
     const certifiedCount = db
       .prepare(
         `
-      SELECT COUNT(DISTINCT worker_id) as count 
-      FROM certifications 
-      WHERE service_type = ? 
-        AND status = 'approved' 
-        AND expires_at > datetime('now')
+      SELECT COUNT(DISTINCT c.worker_id) as count 
+      FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
+      WHERE c.service_type = ? 
+        AND c.status = 'approved' 
+        AND c.expires_at > datetime('now')
+        AND w.status != 'frozen'
     `,
       )
       .get(serviceType) as any;
@@ -160,21 +164,23 @@ export function getLevelDistributionByServiceType(
       `
     WITH ranked_certs AS (
       SELECT 
-        worker_id, 
-        level,
+        c.worker_id, 
+        c.level,
         ROW_NUMBER() OVER (
-          PARTITION BY worker_id 
+          PARTITION BY c.worker_id 
           ORDER BY 
-            CASE level 
+            CASE c.level 
               WHEN 'senior' THEN 1 
               WHEN 'intermediate' THEN 2 
               WHEN 'junior' THEN 3 
             END
         ) as rn
-      FROM certifications 
-      WHERE service_type = ? 
-        AND status = 'approved' 
-        AND expires_at > datetime('now')
+      FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
+      WHERE c.service_type = ? 
+        AND c.status = 'approved' 
+        AND c.expires_at > datetime('now')
+        AND w.status != 'frozen'
     )
     SELECT level, COUNT(*) as count 
     FROM ranked_certs 
@@ -252,6 +258,7 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
   let totalExpired = 0;
   let totalRemedial = 0;
   let totalPending = 0;
+  let totalRevoked = 0;
 
   for (const st of serviceTypes) {
     const serviceType = st.type as ServiceType;
@@ -290,8 +297,10 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
         `
       SELECT COUNT(DISTINCT c.worker_id) as count
       FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
       WHERE c.service_type = ?
         AND c.status = 'expired'
+        AND w.status != 'frozen'
     `,
       )
       .get(serviceType) as any;
@@ -301,9 +310,11 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
         `
       SELECT COUNT(DISTINCT t.worker_id) as count
       FROM trainings t
+      JOIN workers w ON t.worker_id = w.id
       WHERE t.service_type = ?
         AND t.type = 'remedial'
         AND t.status IN ('scheduled', 'in_progress')
+        AND w.status != 'frozen'
     `,
       )
       .get(serviceType) as any;
@@ -313,8 +324,10 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
         `
       SELECT COUNT(DISTINCT c.worker_id) as count
       FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
       WHERE c.service_type = ?
         AND c.status = 'pending'
+        AND w.status != 'frozen'
     `,
       )
       .get(serviceType) as any;
@@ -324,8 +337,23 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
         `
       SELECT COUNT(DISTINCT c.worker_id) as count
       FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
       WHERE c.service_type = ?
         AND c.status = 'rejected'
+        AND w.status != 'frozen'
+    `,
+      )
+      .get(serviceType) as any;
+
+    const revokedRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT c.worker_id) as count
+      FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
+      WHERE c.service_type = ?
+        AND c.status = 'revoked'
+        AND w.status != 'frozen'
     `,
       )
       .get(serviceType) as any;
@@ -339,6 +367,7 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
       remedialTrainingCount: remedialRow.count,
       pendingReviewCount: pendingRow.count,
       rejectedCount: rejectedRow.count,
+      revokedCount: revokedRow.count,
     });
 
     totalEligible += eligibleRow.count;
@@ -346,6 +375,7 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
     totalExpired += expiredRow.count;
     totalRemedial += remedialRow.count;
     totalPending += pendingRow.count;
+    totalRevoked += revokedRow.count;
   }
 
   const totalWorkersRow = db
@@ -359,6 +389,7 @@ export function getOperationsStats(expiringDays: number = 30): OperationsStats {
     expiredCount: totalExpired,
     remedialTrainingCount: totalRemedial,
     pendingReviewCount: totalPending,
+    revokedCount: totalRevoked,
     byServiceType,
   };
 }

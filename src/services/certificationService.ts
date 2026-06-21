@@ -376,3 +376,138 @@ export function listCertifications(
 
   return { certifications, total: totalRow.count };
 }
+
+export function updateCertificationStatus(
+  id: number,
+  status: CertificationStatus,
+): Certification | null {
+  const db = getDb();
+  const cert = getCertification(id);
+
+  if (!cert) return null;
+
+  db.prepare(
+    `
+    UPDATE certifications 
+    SET status = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `,
+  ).run(status, id);
+
+  return getCertification(id);
+}
+
+export function getExpiringCertifications(
+  days: number = 30,
+  serviceType?: ServiceType,
+): Certification[] {
+  const db = getDb();
+  const now = new Date();
+  const targetDate = new Date();
+  targetDate.setDate(now.getDate() + days);
+
+  let query = `
+    SELECT * FROM certifications 
+    WHERE status = 'approved' 
+      AND expires_at > ? 
+      AND expires_at <= ?
+  `;
+  const params: any[] = [now.toISOString(), targetDate.toISOString()];
+
+  if (serviceType) {
+    query += " AND service_type = ?";
+    params.push(serviceType);
+  }
+
+  query += " ORDER BY expires_at ASC";
+
+  const rows = db.prepare(query).all(...params);
+  return rows.map(rowToCertification);
+}
+
+export function getExpiringCertificationsWithWorkers(
+  days: number = 30,
+  serviceType?: ServiceType,
+): Array<{
+  certification: Certification;
+  workerName: string;
+  workerPhone: string;
+}> {
+  const db = getDb();
+  const now = new Date();
+  const targetDate = new Date();
+  targetDate.setDate(now.getDate() + days);
+
+  let query = `
+    SELECT c.*, w.name as worker_name, w.phone as worker_phone
+    FROM certifications c
+    JOIN workers w ON c.worker_id = w.id
+    WHERE c.status = 'approved' 
+      AND c.expires_at > ? 
+      AND c.expires_at <= ?
+  `;
+  const params: any[] = [now.toISOString(), targetDate.toISOString()];
+
+  if (serviceType) {
+    query += " AND c.service_type = ?";
+    params.push(serviceType);
+  }
+
+  query += " ORDER BY c.expires_at ASC";
+
+  const rows = db.prepare(query).all(...params);
+  return rows.map((row: any) => ({
+    certification: rowToCertification(row),
+    workerName: row.worker_name,
+    workerPhone: row.worker_phone,
+  }));
+}
+
+export function reviewRenewalCertification(
+  id: number,
+  dto: ReviewCertificationDto,
+): Certification | null {
+  const db = getDb();
+  const cert = getCertification(id);
+
+  if (!cert) return null;
+
+  if (
+    cert.status !== CertificationStatus.PENDING &&
+    cert.status !== CertificationStatus.REMEDIAL_TRAINING
+  ) {
+    throw new Error("只有待审核或补训中的认证才能复审");
+  }
+
+  const validYears = dto.validYears || 3;
+
+  if (dto.passed) {
+    const issuedAt = new Date().toISOString();
+    const expiresAt = new Date();
+    expiresAt.setFullYear(expiresAt.getFullYear() + validYears);
+
+    db.prepare(
+      `
+      UPDATE certifications 
+      SET status = 'approved', issued_at = ?, expires_at = ?, 
+          review_count = review_count + 1, updated_at = datetime('now')
+      WHERE id = ?
+    `,
+    ).run(issuedAt, expiresAt.toISOString(), id);
+
+    const worker = getWorker(cert.workerId);
+    if (worker && worker.status === WorkerStatus.ACTIVE) {
+      updateWorkerStatus(cert.workerId, WorkerStatus.CERTIFIED);
+    }
+  } else {
+    db.prepare(
+      `
+      UPDATE certifications 
+      SET status = 'rejected', updated_at = datetime('now')
+      WHERE id = ?
+    `,
+    ).run(id);
+  }
+
+  return getCertification(id);
+}

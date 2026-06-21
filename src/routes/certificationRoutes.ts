@@ -109,4 +109,29 @@ router.get("/profile/:workerId", (req: Request, res: Response) => {
   res.json(profile);
 });
 
+router.get("/expiring/soon", (req: Request, res: Response) => {
+  const { days = "30", serviceType } = req.query;
+  const certs = certificationService.getExpiringCertificationsWithWorkers(
+    parseInt(days as string),
+    serviceType as ServiceType | undefined,
+  );
+  res.json(certs);
+});
+
+router.post("/:id/review-renewal", (req: Request, res: Response) => {
+  try {
+    const cert = certificationService.reviewRenewalCertification(
+      getIdParam(req),
+      req.body,
+    );
+    if (!cert) {
+      res.status(404).json({ error: "认证不存在" });
+      return;
+    }
+    res.json(cert);
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 export default router;

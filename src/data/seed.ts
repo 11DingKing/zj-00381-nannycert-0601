@@ -10,9 +10,17 @@ import {
   reviewCertification,
   renewCertification,
   getWorkerCertifications,
+  updateCertificationStatus,
 } from "../services/certificationService";
+import { createTraining, startTraining } from "../services/trainingService";
 import { initServiceTypeConfigs } from "../services/serviceTypeService";
-import { ServiceType, SkillLevel, WorkerStatus } from "../models/types";
+import {
+  ServiceType,
+  SkillLevel,
+  WorkerStatus,
+  TrainingType,
+  CertificationStatus,
+} from "../models/types";
 
 export function seedSampleData() {
   const workersData = [
@@ -346,6 +354,153 @@ export function seedSampleData() {
     );
   } catch (e) {
     console.log(`跳过已存在的混合示例人员`);
+  }
+
+  try {
+    const soonExpireWorker = createWorker({
+      idCard: "310101198507070005",
+      name: "钱快到期",
+      phone: "13800000105",
+      serviceTypes: [ServiceType.DAILY_CLEANING, ServiceType.ELDERLY_CARE],
+      healthStatus: "健康",
+      yearsOfExperience: 10,
+    });
+    approveWorker(soonExpireWorker.id);
+
+    const validCert1 = applyCertification({
+      workerId: soonExpireWorker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "钱快到期-日常保洁-中级培训结业证书.pdf",
+      practicalAssessmentRecord: "钱快到期-日常保洁-中级实操考核记录.docx",
+    });
+    reviewCertification(validCert1.id, { passed: true, validYears: 3 });
+
+    const soonCert = applyCertification({
+      workerId: soonExpireWorker.id,
+      serviceType: ServiceType.ELDERLY_CARE,
+      level: SkillLevel.JUNIOR,
+      trainingCertificate: "钱快到期-养老陪护-初级培训结业证书.pdf",
+      practicalAssessmentRecord: "钱快到期-养老陪护-初级实操考核记录.docx",
+    });
+    reviewCertification(soonCert.id, { passed: true, validYears: 3 });
+
+    const issuedDate = new Date();
+    issuedDate.setFullYear(issuedDate.getFullYear() - 2);
+    issuedDate.setMonth(issuedDate.getMonth() + 11);
+    const expireDate = new Date();
+    expireDate.setDate(expireDate.getDate() + 15);
+
+    db.prepare(
+      `
+      UPDATE certifications 
+      SET issued_at = ?, expires_at = ?, updated_at = datetime('now')
+      WHERE id = ?
+      `,
+    ).run(issuedDate.toISOString(), expireDate.toISOString(), soonCert.id);
+
+    console.log(
+      `创建快到期示例: 钱快到期 (ID: ${soonExpireWorker.id}) - 保洁中级有效、养老初级还有15天到期`,
+    );
+  } catch (e) {
+    console.log(`跳过已存在的快到期示例人员`);
+  }
+
+  try {
+    const remedialWorker = createWorker({
+      idCard: "310101199009090006",
+      name: "冯补训",
+      phone: "13800000106",
+      serviceTypes: [ServiceType.MATERNAL_INFANT_CARE],
+      healthStatus: "健康，持有健康证",
+      yearsOfExperience: 6,
+    });
+    approveWorker(remedialWorker.id);
+
+    const failedCert = applyCertification({
+      workerId: remedialWorker.id,
+      serviceType: ServiceType.MATERNAL_INFANT_CARE,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "冯补训-母婴照料-中级培训结业证书.pdf",
+      practicalAssessmentRecord: "冯补训-母婴照料-中级实操考核记录.docx",
+    });
+    reviewCertification(failedCert.id, { passed: true, validYears: 3 });
+
+    updateCertificationStatus(
+      failedCert.id,
+      CertificationStatus.REMEDIAL_TRAINING,
+    );
+
+    const training = createTraining({
+      workerId: remedialWorker.id,
+      certificationId: failedCert.id,
+      serviceType: ServiceType.MATERNAL_INFANT_CARE,
+      type: TrainingType.REMEDIAL,
+      title: "母婴照料中级补训课程",
+      description: "复审未通过，需完成40学时补训并重新考核",
+      trainingHours: 40,
+      trainer: "李老师",
+      notes: "重点提升新生儿护理实操技能",
+    });
+
+    startTraining(training.id);
+
+    console.log(
+      `创建补训示例: 冯补训 (ID: ${remedialWorker.id}) - 母婴中级补训中，培训ID: ${training.id}`,
+    );
+  } catch (e) {
+    console.log(`跳过已存在的补训示例人员`);
+  }
+
+  try {
+    const recoveredWorker = createWorker({
+      idCard: "310101198711110007",
+      name: "陈已恢复",
+      phone: "13800000107",
+      serviceTypes: [ServiceType.DAILY_CLEANING],
+      healthStatus: "健康",
+      yearsOfExperience: 8,
+    });
+    approveWorker(recoveredWorker.id);
+
+    const cert = applyCertification({
+      workerId: recoveredWorker.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      level: SkillLevel.INTERMEDIATE,
+      trainingCertificate: "陈已恢复-日常保洁-中级培训结业证书.pdf",
+      practicalAssessmentRecord: "陈已恢复-日常保洁-中级实操考核记录.docx",
+    });
+    reviewCertification(cert.id, { passed: true, validYears: 3 });
+
+    const pastTraining = createTraining({
+      workerId: recoveredWorker.id,
+      certificationId: cert.id,
+      serviceType: ServiceType.DAILY_CLEANING,
+      type: TrainingType.REMEDIAL,
+      title: "日常保洁中级补训（已完成）",
+      description: "复审未通过后补训并考核通过",
+      trainingHours: 32,
+      trainer: "王老师",
+      notes: "补训后实操能力显著提升",
+    });
+
+    db.prepare(
+      `
+      UPDATE trainings 
+      SET status = 'passed', practical_score = 88, theory_score = 92, 
+          start_date = datetime('now', '-30 days'), end_date = datetime('now', '-20 days'),
+          updated_at = datetime('now')
+      WHERE id = ?
+      `,
+    ).run(pastTraining.id);
+
+    renewCertification(cert.id, 3);
+
+    console.log(
+      `创建恢复示例: 陈已恢复 (ID: ${recoveredWorker.id}) - 保洁中级，曾补训后通过，已恢复接单`,
+    );
+  } catch (e) {
+    console.log(`跳过已存在的恢复示例人员`);
   }
 
   console.log("示例数据初始化完成");

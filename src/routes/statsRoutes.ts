@@ -28,4 +28,25 @@ router.get("/certifications/status", (_req: Request, res: Response) => {
   res.json(stats);
 });
 
+router.get("/operations", (req: Request, res: Response) => {
+  const { expiringDays = "30" } = req.query;
+  const stats = statsService.getOperationsStats(
+    parseInt(expiringDays as string),
+  );
+  res.json(stats);
+});
+
+router.get("/operations/service-types/:type", (req: Request, res: Response) => {
+  const { expiringDays = "30" } = req.query;
+  const stats = statsService.getOperationsStatsByServiceType(
+    req.params.type as any,
+    parseInt(expiringDays as string),
+  );
+  if (!stats) {
+    res.status(404).json({ error: "服务类型不存在" });
+    return;
+  }
+  res.json(stats);
+});
+
 export default router;

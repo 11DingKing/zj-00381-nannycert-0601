@@ -1,5 +1,11 @@
 import { getDb } from "../database/database";
-import { ServiceType, SkillLevel, CertificationStatus } from "../models/types";
+import {
+  ServiceType,
+  SkillLevel,
+  CertificationStatus,
+  TrainingStatus,
+  TrainingType,
+} from "../models/types";
 
 export interface LevelDistribution {
   level: SkillLevel;
@@ -13,6 +19,27 @@ export interface ServiceTypeStats {
   totalApplications: number;
   passRate: number;
   levelDistribution: LevelDistribution[];
+}
+
+export interface OperationsServiceTypeStats {
+  serviceType: ServiceType;
+  serviceName: string;
+  eligibleCount: number;
+  expiringSoonCount: number;
+  expiredCount: number;
+  remedialTrainingCount: number;
+  pendingReviewCount: number;
+  rejectedCount: number;
+}
+
+export interface OperationsStats {
+  totalWorkers: number;
+  eligibleWorkers: number;
+  expiringSoonCount: number;
+  expiredCount: number;
+  remedialTrainingCount: number;
+  pendingReviewCount: number;
+  byServiceType: OperationsServiceTypeStats[];
 }
 
 export interface OverallStats {
@@ -207,4 +234,140 @@ export function getCertificationStatsByStatus(): Record<
   }
 
   return result as Record<CertificationStatus, number>;
+}
+
+export function getOperationsStats(expiringDays: number = 30): OperationsStats {
+  const db = getDb();
+  const now = new Date();
+  const expiringDate = new Date();
+  expiringDate.setDate(now.getDate() + expiringDays);
+
+  const serviceTypes = db
+    .prepare("SELECT * FROM service_type_configs ORDER BY id")
+    .all() as any[];
+
+  const byServiceType: OperationsServiceTypeStats[] = [];
+  let totalEligible = 0;
+  let totalExpiringSoon = 0;
+  let totalExpired = 0;
+  let totalRemedial = 0;
+  let totalPending = 0;
+
+  for (const st of serviceTypes) {
+    const serviceType = st.type as ServiceType;
+
+    const eligibleRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT c.worker_id) as count
+      FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
+      WHERE c.service_type = ?
+        AND c.status = 'approved'
+        AND c.expires_at > ?
+        AND w.status != 'frozen'
+    `,
+      )
+      .get(serviceType, now.toISOString()) as any;
+
+    const expiringRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT c.worker_id) as count
+      FROM certifications c
+      JOIN workers w ON c.worker_id = w.id
+      WHERE c.service_type = ?
+        AND c.status = 'approved'
+        AND c.expires_at > ?
+        AND c.expires_at <= ?
+        AND w.status != 'frozen'
+    `,
+      )
+      .get(serviceType, now.toISOString(), expiringDate.toISOString()) as any;
+
+    const expiredRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT c.worker_id) as count
+      FROM certifications c
+      WHERE c.service_type = ?
+        AND c.status = 'expired'
+    `,
+      )
+      .get(serviceType) as any;
+
+    const remedialRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT t.worker_id) as count
+      FROM trainings t
+      WHERE t.service_type = ?
+        AND t.type = 'remedial'
+        AND t.status IN ('scheduled', 'in_progress')
+    `,
+      )
+      .get(serviceType) as any;
+
+    const pendingRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT c.worker_id) as count
+      FROM certifications c
+      WHERE c.service_type = ?
+        AND c.status = 'pending'
+    `,
+      )
+      .get(serviceType) as any;
+
+    const rejectedRow = db
+      .prepare(
+        `
+      SELECT COUNT(DISTINCT c.worker_id) as count
+      FROM certifications c
+      WHERE c.service_type = ?
+        AND c.status = 'rejected'
+    `,
+      )
+      .get(serviceType) as any;
+
+    byServiceType.push({
+      serviceType,
+      serviceName: st.name,
+      eligibleCount: eligibleRow.count,
+      expiringSoonCount: expiringRow.count,
+      expiredCount: expiredRow.count,
+      remedialTrainingCount: remedialRow.count,
+      pendingReviewCount: pendingRow.count,
+      rejectedCount: rejectedRow.count,
+    });
+
+    totalEligible += eligibleRow.count;
+    totalExpiringSoon += expiringRow.count;
+    totalExpired += expiredRow.count;
+    totalRemedial += remedialRow.count;
+    totalPending += pendingRow.count;
+  }
+
+  const totalWorkersRow = db
+    .prepare("SELECT COUNT(*) as count FROM workers")
+    .get() as any;
+
+  return {
+    totalWorkers: totalWorkersRow.count,
+    eligibleWorkers: totalEligible,
+    expiringSoonCount: totalExpiringSoon,
+    expiredCount: totalExpired,
+    remedialTrainingCount: totalRemedial,
+    pendingReviewCount: totalPending,
+    byServiceType,
+  };
+}
+
+export function getOperationsStatsByServiceType(
+  serviceType: ServiceType,
+  expiringDays: number = 30,
+): OperationsServiceTypeStats | null {
+  const stats = getOperationsStats(expiringDays);
+  const found = stats.byServiceType.find((s) => s.serviceType === serviceType);
+  return found || null;
 }

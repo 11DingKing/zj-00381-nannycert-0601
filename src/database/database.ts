@@ -62,9 +62,36 @@ function createTables() {
       description TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS trainings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      worker_id INTEGER NOT NULL,
+      certification_id INTEGER,
+      service_type TEXT NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'scheduled',
+      title TEXT NOT NULL,
+      description TEXT,
+      start_date TEXT,
+      end_date TEXT,
+      training_hours INTEGER NOT NULL DEFAULT 0,
+      practical_score REAL,
+      theory_score REAL,
+      trainer TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (worker_id) REFERENCES workers(id),
+      FOREIGN KEY (certification_id) REFERENCES certifications(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_certifications_worker_id ON certifications(worker_id);
     CREATE INDEX IF NOT EXISTS idx_certifications_service_type ON certifications(service_type);
+    CREATE INDEX IF NOT EXISTS idx_certifications_status ON certifications(status);
+    CREATE INDEX IF NOT EXISTS idx_certifications_expires_at ON certifications(expires_at);
     CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status);
+    CREATE INDEX IF NOT EXISTS idx_trainings_worker_id ON trainings(worker_id);
+    CREATE INDEX IF NOT EXISTS idx_trainings_service_type ON trainings(service_type);
+    CREATE INDEX IF NOT EXISTS idx_trainings_status ON trainings(status);
   `);
 }
 

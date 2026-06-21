@@ -93,4 +93,59 @@ router.delete("/:id", (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
+router.get("/:id/profile", (req: Request, res: Response) => {
+  const profile = workerService.getWorkerProfile(getIdParam(req));
+  if (!profile) {
+    res.status(404).json({ error: "家政人员不存在" });
+    return;
+  }
+  res.json(profile);
+});
+
+router.get("/:id/eligibility/:serviceType", (req: Request, res: Response) => {
+  const eligibility = workerService.getServiceTypeEligibility(
+    getIdParam(req),
+    req.params.serviceType as ServiceType,
+  );
+  res.json(eligibility);
+});
+
+router.get(
+  "/eligibility/:serviceType/eligible",
+  (req: Request, res: Response) => {
+    const { page = "1", pageSize = "20" } = req.query;
+    const result = workerService.getWorkersByEligibility(
+      req.params.serviceType as ServiceType,
+      true,
+      parseInt(page as string),
+      parseInt(pageSize as string),
+    );
+    res.json(result);
+  },
+);
+
+router.get(
+  "/eligibility/:serviceType/ineligible",
+  (req: Request, res: Response) => {
+    const { page = "1", pageSize = "20" } = req.query;
+    const result = workerService.getWorkersByEligibility(
+      req.params.serviceType as ServiceType,
+      false,
+      parseInt(page as string),
+      parseInt(pageSize as string),
+    );
+    res.json(result);
+  },
+);
+
+router.get("/remedial-training", (req: Request, res: Response) => {
+  const { serviceType, page = "1", pageSize = "20" } = req.query;
+  const result = workerService.getWorkersInRemedialTraining(
+    serviceType as ServiceType | undefined,
+    parseInt(page as string),
+    parseInt(pageSize as string),
+  );
+  res.json(result);
+});
+
 export default router;

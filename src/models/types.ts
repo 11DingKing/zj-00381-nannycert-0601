@@ -22,6 +22,57 @@ export enum CertificationStatus {
   APPROVED = "approved",
   REJECTED = "rejected",
   EXPIRED = "expired",
+  REMEDIAL_TRAINING = "remedial_training",
+}
+
+export enum TrainingType {
+  REMEDIAL = "remedial",
+  REFRESHER = "refresher",
+  INITIAL = "initial",
+}
+
+export enum TrainingStatus {
+  SCHEDULED = "scheduled",
+  IN_PROGRESS = "in_progress",
+  COMPLETED = "completed",
+  PASSED = "passed",
+  FAILED = "failed",
+}
+
+export interface Training {
+  id: number;
+  workerId: number;
+  certificationId?: number;
+  serviceType: ServiceType;
+  type: TrainingType;
+  status: TrainingStatus;
+  title: string;
+  description?: string;
+  startDate?: string;
+  endDate?: string;
+  trainingHours: number;
+  practicalScore?: number;
+  theoryScore?: number;
+  trainer?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ServiceTypeEligibility {
+  serviceType: ServiceType;
+  serviceName: string;
+  eligible: boolean;
+  reason: string;
+  certification?: Certification;
+  activeTraining?: Training;
+}
+
+export interface WorkerProfile {
+  worker: Worker;
+  certifications: Certification[];
+  trainings: Training[];
+  eligibility: ServiceTypeEligibility[];
 }
 
 export interface Worker {
